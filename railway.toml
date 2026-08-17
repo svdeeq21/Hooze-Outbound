@@ -1,0 +1,6 @@
+[build]
+builder = "RAILPACK"
+buildCommand = "pip install -r python/requirements.txt"
+
+[deploy]
+startCommand = "uvicorn python.api:app --host 0.0.0.0 --port $PORT"
