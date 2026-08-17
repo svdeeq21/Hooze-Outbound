@@ -1,0 +1,2 @@
+timestamp,row_data,error_reason
+2026-01-15T08:03:12Z,"{""name"":"""",""industry"":""Real Estate"",""location"":""Abuja""}",Missing required field: name

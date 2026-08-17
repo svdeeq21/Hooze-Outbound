@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hooze Outbound — Review Dashboard</title>
+<!--
+  dashboard/index.html — WF-09 (Human Approval), WF-10 (Send Confirmation),
+  and WF-13 (Opportunity Management) frontend, per docs/10-outreach-sop.md.
+
+  DESIGN NOTE ON DATA ACCESS: this page holds NO Supabase credential of any
+  kind (anon or otherwise). Every read and write goes through the n8n
+  webhooks configured below — see docs/14-security-spec.md §7 ("Python
+  scripts run with the same service-role credential as n8n, no separate
+  exposed API surface in V1") and migration 011_row_level_security.sql
+  (RLS is default-deny with zero anon policies, by design). This is the
+  simplest way to honor both without adding a second credential surface.
+
+  SETUP: after importing n8n/WF-09/10/13 and activating them, copy each
+  workflow's webhook URL from the n8n editor into WEBHOOKS below. Per
+  docs/14-security-spec.md §3, add a shared-secret header check on each
+  webhook in n8n (a Function/IF node comparing a header to an env var) and
+  set the matching value in SHARED_SECRET — this file sends it on every
+  request but the burden of REJECTING requests without it is on the n8n
+  side, since this is a static file with no server component to hide a
+  secret in (§7: "single-user login" — pair this page with basic auth or a
+  reverse-proxy login in front of it for real deployment).
+-->
+<style>
+  :root {
+    /* A deliberately un-templated palette: this is a working sales-ops
+       tool used all day, so it leans toward a quiet, high-contrast
+       "ledger" feel (paper + ink + one signal color per priority tier)
+       rather than a generic dark SaaS dashboard. */
+    --paper: #f7f5f0;
+    --paper-raised: #ffffff;
+    --ink: #23201b;
+    --ink-soft: #6b6459;
+    --rule: #e3ddd0;
+    --rule-strong: #c9c0ac;
+    --tier-a: #2f6b4f;
+    --tier-a-bg: #e6f0e9;
+    --tier-b: #a06a1f;
+    --tier-b-bg: #f4ead6;
+    --tier-c: #8a8378;
+    --tier-c-bg: #ece9e1;
+    --accent: #b34a2f;
+    --accent-bg: #f6e3db;
+    --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+    --serif: "Iowan Old Style", "Georgia", "Source Serif Pro", serif;
+    --sans: -apple-system, "Inter", "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 20px 28px 16px;
+    border-bottom: 1px solid var(--rule-strong);
+  }
+  header h1 {
+    font-family: var(--serif);
+    font-weight: 500;
+    font-size: 22px;
+    margin: 0;
+    letter-spacing: 0.2px;
+  }
+  header .subtitle {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  nav.tabs {
+    display: flex;
+    gap: 4px;
+    padding: 0 24px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--paper);
+  }
+  nav.tabs button {
+    appearance: none;
+    border: none;
+    background: none;
+    font-family: var(--mono);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-soft);
+    padding: 12px 14px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+  }
+  nav.tabs button.active {
+    color: var(--ink);
+    border-bottom-color: var(--accent);
+  }
+  nav.tabs button .count {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    background: var(--rule);
+    color: var(--ink);
+    font-size: 10px;
+  }
+  main { padding: 20px 24px 60px; max-width: 900px; margin: 0 auto; }
+  .empty {
+    text-align: center;
+    color: var(--ink-soft);
+    padding: 60px 20px;
+    font-family: var(--serif);
+    font-style: italic;
+  }
+  .card {
+    background: var(--paper-raised);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .card-head .company-name {
+    font-family: var(--serif);
+    font-size: 17px;
+    font-weight: 600;
+  }
+  .card-head .meta {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--ink-soft);
+    margin-top: 2px;
+  }
+  .tier-badge {
+    font-family: var(--mono);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 3px;
+    letter-spacing: 0.03em;
+  }
+  .tier-A { background: var(--tier-a-bg); color: var(--tier-a); }
+  .tier-B { background: var(--tier-b-bg); color: var(--tier-b); }
+  .tier-C { background: var(--tier-c-bg); color: var(--tier-c); }
+  .card-body { padding: 16px 18px; }
+  .score-line {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    background: var(--paper);
+    border-left: 2px solid var(--rule-strong);
+  }
+  .message-box {
+    font-family: var(--serif);
+    font-size: 15px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    padding: 14px;
+    background: var(--paper);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    margin-bottom: 10px;
+  }
+  .message-box[contenteditable="true"] {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .evidence-list {
+    margin: 10px 0 14px;
+    padding: 0;
+    list-style: none;
+  }
+  .evidence-list li {
+    font-size: 12.5px;
+    padding: 6px 0;
+    border-bottom: 1px dotted var(--rule);
+    display: flex;
+    gap: 8px;
+  }
+  .evidence-list a {
+    color: var(--accent);
+    text-decoration: none;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    white-space: nowrap;
+  }
+  .conf-tag {
+    font-family: var(--mono);
+    font-size: 9.5px;
+    padding: 1px 5px;
+    border-radius: 2px;
+    background: var(--rule);
+    height: fit-content;
+  }
+  .warnings {
+    background: var(--accent-bg);
+    border: 1px solid var(--accent);
+    border-radius: 3px;
+    padding: 8px 12px;
+    font-size: 12px;
+    color: var(--accent);
+    margin-bottom: 12px;
+  }
+  .actions { display: flex; gap: 8px; margin-top: 14px; }
+  button.action-btn {
+    font-family: var(--sans);
+    font-size: 12.5px;
+    font-weight: 600;
+    padding: 8px 16px;
+    border-radius: 3px;
+    border: 1px solid var(--rule-strong);
+    background: var(--paper-raised);
+    cursor: pointer;
+    color: var(--ink);
+  }
+  button.approve { background: var(--tier-a); color: white; border-color: var(--tier-a); }
+  button.reject { background: var(--paper-raised); color: var(--accent); border-color: var(--accent); }
+  button.edit { background: var(--paper); }
+  button.send { background: var(--ink); color: var(--paper-raised); }
+  button.action-btn:disabled { opacity: 0.5; cursor: wait; }
+  .response-text {
+    font-family: var(--serif);
+    font-style: italic;
+    padding: 12px;
+    background: var(--paper);
+    border-left: 2px solid var(--accent);
+    margin-bottom: 10px;
+  }
+  .classification-badge {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 2px 7px;
+    border-radius: 2px;
+    background: var(--rule);
+  }
+  #config-banner {
+    background: var(--accent-bg);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 8px 24px;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="config-banner">⚠ Webhook URLs not configured — edit WEBHOOKS at the top of the &lt;script&gt; block in this file.</div>
+
+<header>
+  <div>
+    <h1>Hooze Outbound</h1>
+    <div class="subtitle">Review Dashboard · Campaign 001</div>
+  </div>
+  <div class="subtitle" id="clock"></div>
+</header>
+
+<nav class="tabs">
+  <button data-tab="review" class="active">Review Queue <span class="count" id="count-review">0</span></button>
+  <button data-tab="send">Send Queue <span class="count" id="count-send">0</span></button>
+  <button data-tab="replied">Replied <span class="count" id="count-replied">0</span></button>
+</nav>
+
+<main>
+  <div id="panel-review"></div>
+  <div id="panel-send" style="display:none"></div>
+  <div id="panel-replied" style="display:none"></div>
+</main>
+
+<script>
+// =====================================================================
+// CONFIGURATION — set these to your n8n instance's webhook URLs after
+// importing and activating n8n/WF-09-human-approval.json,
+// n8n/WF-10-outreach-queue-send-confirmation.json, and
+// n8n/WF-13-opportunity-management.json.
+// =====================================================================
+const WEBHOOKS = {
+  review: "https://YOUR-N8N-HOST/webhook/wf09-review-action",
+  send:   "https://YOUR-N8N-HOST/webhook/wf10-outreach-queue",
+  opps:   "https://YOUR-N8N-HOST/webhook/wf13-opportunities",
+};
+const SHARED_SECRET = "SET_ME"; // docs/14-security-spec.md §3 — must match the n8n-side check
+
+if (WEBHOOKS.review.includes("YOUR-N8N-HOST")) {
+  document.getElementById("config-banner").style.display = "block";
+}
+
+async function callWebhook(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Hooze-Secret": SHARED_SECRET },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Request failed (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+function escapeHtml(s) {
+  const div = document.createElement("div");
+  div.textContent = s ?? "";
+  return div.innerHTML;
+}
+
+function tierBadge(priority) {
+  const p = priority || "C";
+  return `<span class="tier-badge tier-${p}">${p}</span>`;
+}
+
+// ---------------------------------------------------------------------
+// Review Queue (WF-09) — approve / edit+approve / reject
+// ---------------------------------------------------------------------
+async function loadReviewQueue() {
+  const panel = document.getElementById("panel-review");
+  panel.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const data = await callWebhook(WEBHOOKS.review, { action: "list" });
+    document.getElementById("count-review").textContent = data.length;
+    if (!data.length) {
+      panel.innerHTML = `<div class="empty">Nothing waiting for review. Nice.</div>`;
+      return;
+    }
+    panel.innerHTML = data.map(renderReviewCard).join("");
+    data.forEach((row) => wireReviewCard(row));
+  } catch (e) {
+    panel.innerHTML = `<div class="empty">Couldn't load the review queue: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderReviewCard(row) {
+  const { outreach, company, score, evidence } = row;
+  const evidenceItems = (evidence || [])
+    .filter((e) => e.confidence !== "LOW")
+    .map(
+      (e) => `<li><span class="conf-tag">${e.confidence}</span> ${escapeHtml(e.claim)}
+        <a href="${escapeHtml(e.source_url)}" target="_blank" rel="noopener">source ↗</a></li>`
+    )
+    .join("");
+  return `
+    <div class="card" data-outreach-id="${outreach.id}">
+      <div class="card-head">
+        <div>
+          <div class="company-name">${escapeHtml(company.name)}</div>
+          <div class="meta">${escapeHtml(company.industry)} · ${escapeHtml(company.location)} · ${escapeHtml(outreach.channel)}</div>
+        </div>
+        ${tierBadge(score && score.priority)}
+      </div>
+      <div class="card-body">
+        ${score ? `<div class="score-line">${escapeHtml(score.reason)}</div>` : ""}
+        <div class="message-box" data-role="message-text">${escapeHtml(outreach.message)}</div>
+        <ul class="evidence-list">${evidenceItems || "<li>No HIGH/MEDIUM confidence evidence on record.</li>"}</ul>
+        <div class="actions">
+          <button class="action-btn edit" data-role="edit-btn">Edit</button>
+          <button class="action-btn approve" data-role="approve-btn">Approve</button>
+          <button class="action-btn reject" data-role="reject-btn">Reject</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function wireReviewCard(row) {
+  const card = document.querySelector(`.card[data-outreach-id="${row.outreach.id}"]`);
+  if (!card) return;
+  const msgBox = card.querySelector('[data-role="message-text"]');
+  const editBtn = card.querySelector('[data-role="edit-btn"]');
+  const approveBtn = card.querySelector('[data-role="approve-btn"]');
+  const rejectBtn = card.querySelector('[data-role="reject-btn"]');
+
+  editBtn.addEventListener("click", () => {
+    const editing = msgBox.getAttribute("contenteditable") === "true";
+    msgBox.setAttribute("contenteditable", editing ? "false" : "true");
+    editBtn.textContent = editing ? "Edit" : "Done editing";
+    if (!editing) msgBox.focus();
+  });
+
+  approveBtn.addEventListener("click", async () => {
+    approveBtn.disabled = true;
+    try {
+      const editedText = msgBox.textContent.trim();
+      const original = row.outreach.message.trim();
+      await callWebhook(WEBHOOKS.review, {
+        action: "approve",
+        outreach_id: row.outreach.id,
+        edited_message: editedText !== original ? editedText : "",
+      });
+      card.remove();
+      refreshCounts();
+    } catch (e) {
+      alert("Approve failed: " + e.message);
+      approveBtn.disabled = false;
+    }
+  });
+
+  rejectBtn.addEventListener("click", async () => {
+    const reason = prompt("Rejection reason (feeds scoring/research quality review):");
+    if (!reason || !reason.trim()) return; // §3: a reason is required
+    rejectBtn.disabled = true;
+    try {
+      await callWebhook(WEBHOOKS.review, { action: "reject", outreach_id: row.outreach.id, reason });
+      card.remove();
+      refreshCounts();
+    } catch (e) {
+      alert("Reject failed: " + e.message);
+      rejectBtn.disabled = false;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------
+// Send Queue (WF-10) — APPROVED messages waiting for Hooze to actually
+// send via WhatsApp/Gmail, then confirm here.
+// ---------------------------------------------------------------------
+async function loadSendQueue() {
+  const panel = document.getElementById("panel-send");
+  panel.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const data = await callWebhook(WEBHOOKS.send, { action: "list" });
+    document.getElementById("count-send").textContent = data.length;
+    if (!data.length) {
+      panel.innerHTML = `<div class="empty">Nothing approved and waiting to send.</div>`;
+      return;
+    }
+    panel.innerHTML = data.map(renderSendCard).join("");
+    data.forEach((row) => wireSendCard(row));
+  } catch (e) {
+    panel.innerHTML = `<div class="empty">Couldn't load the send queue: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderSendCard(row) {
+  const { outreach, company, contact } = row;
+  const contactLine = contact
+    ? `${escapeHtml(contact.name || "Unnamed contact")}${contact.job_title ? " — " + escapeHtml(contact.job_title) : ""}`
+    : "No named contact on file";
+  return `
+    <div class="card" data-outreach-id="${outreach.id}">
+      <div class="card-head">
+        <div>
+          <div class="company-name">${escapeHtml(company.name)}</div>
+          <div class="meta">${contactLine} · via ${escapeHtml(outreach.channel)}</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div class="message-box">${escapeHtml(outreach.message)}</div>
+        <div class="actions">
+          <button class="action-btn send" data-role="send-btn">Mark as Sent</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function wireSendCard(row) {
+  const card = document.querySelector(`#panel-send .card[data-outreach-id="${row.outreach.id}"]`);
+  if (!card) return;
+  const btn = card.querySelector('[data-role="send-btn"]');
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    try {
+      await callWebhook(WEBHOOKS.send, { action: "mark_sent", outreach_id: row.outreach.id });
+      card.remove();
+      refreshCounts();
+    } catch (e) {
+      alert("Mark as sent failed: " + e.message);
+      btn.disabled = false;
+    }
+  });
+}
+
+// ---------------------------------------------------------------------
+// Replied Queue (WF-13 read side) — companies that replied, showing the
+// latest classification and a quick "advance to opportunity" action.
+// ---------------------------------------------------------------------
+async function loadRepliedQueue() {
+  const panel = document.getElementById("panel-replied");
+  panel.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const data = await callWebhook(WEBHOOKS.opps, { action: "list" });
+    document.getElementById("count-replied").textContent = data.length;
+    if (!data.length) {
+      panel.innerHTML = `<div class="empty">No unactioned replies right now.</div>`;
+      return;
+    }
+    panel.innerHTML = data.map(renderRepliedCard).join("");
+    data.forEach((row) => wireRepliedCard(row));
+  } catch (e) {
+    panel.innerHTML = `<div class="empty">Couldn't load replies: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderRepliedCard(row) {
+  const { company, responses } = row;
+  const latest = (responses || [])[0];
+  return `
+    <div class="card" data-company-id="${company.id}">
+      <div class="card-head">
+        <div>
+          <div class="company-name">${escapeHtml(company.name)}</div>
+          <div class="meta">${escapeHtml(company.industry)} · ${escapeHtml(company.location)}</div>
+        </div>
+        ${latest ? `<span class="classification-badge">${escapeHtml(latest.classification)}</span>` : ""}
+      </div>
+      <div class="card-body">
+        ${latest ? `<div class="response-text">"${escapeHtml(latest.response_text)}"</div>` : "<div class=\"empty\">No response on record.</div>"}
+        <div class="actions">
+          <button class="action-btn" data-role="advance-btn" data-stage="MEETING">→ Meeting</button>
+          <button class="action-btn" data-role="advance-btn" data-stage="PROPOSAL">→ Proposal</button>
+          <button class="action-btn" data-role="advance-btn" data-stage="WON">→ Won</button>
+          <button class="action-btn reject" data-role="advance-btn" data-stage="LOST">→ Lost</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function wireRepliedCard(row) {
+  const card = document.querySelector(`#panel-replied .card[data-company-id="${row.company.id}"]`);
+  if (!card) return;
+  card.querySelectorAll('[data-role="advance-btn"]').forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const stage = btn.getAttribute("data-stage");
+      const notes = prompt(`Notes for moving ${row.company.name} to ${stage} (optional):`) || "";
+      btn.disabled = true;
+      try {
+        await callWebhook(WEBHOOKS.opps, { action: "advance", company_id: row.company.id, stage, notes });
+        card.remove();
+        refreshCounts();
+      } catch (e) {
+        alert("Advance failed: " + e.message);
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+// ---------------------------------------------------------------------
+// Tabs + init
+// ---------------------------------------------------------------------
+function refreshCounts() {
+  document.getElementById("count-review").textContent =
+    document.querySelectorAll("#panel-review .card").length;
+  document.getElementById("count-send").textContent =
+    document.querySelectorAll("#panel-send .card").length;
+  document.getElementById("count-replied").textContent =
+    document.querySelectorAll("#panel-replied .card").length;
+}
+
+document.querySelectorAll("nav.tabs button").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav.tabs button").forEach((b) => b.classList.remove("active"));
+    btn.classList.add("active");
+    ["review", "send", "replied"].forEach((t) => {
+      document.getElementById(`panel-${t}`).style.display = t === btn.dataset.tab ? "block" : "none";
+    });
+  });
+});
+
+function tickClock() {
+  document.getElementById("clock").textContent = new Date().toLocaleString();
+}
+tickClock();
+setInterval(tickClock, 1000);
+
+loadReviewQueue();
+loadSendQueue();
+loadRepliedQueue();
+</script>
+</body>
+</html>

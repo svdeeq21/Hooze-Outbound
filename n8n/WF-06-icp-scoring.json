@@ -1,0 +1,169 @@
+{
+  "name": "WF-06 - ICP Scoring",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-06 \u2014 ICP SCORING\n\nTRIGGER: After WF-05, status=RESEARCHED\nINPUT: companies, research, research_evidence, contacts (all fetched inside the python module, not by n8n)\nPROCESSING: Calls the Python API's /wf06/score endpoint (python/scoring/engine.py) \u2014 deterministic, NO AI call, implements docs/06-scoring-engine.md exactly. Also runs python/scoring/signal_matcher.py internally to derive pain_signals/buying_signals from evidence before scoring.\nOUTPUT: lead_scores row; companies.status -> QUALIFIED if total >= 65, else stays RESEARCHED (visible as tier C/DONT_CONTACT in dashboard)\nDB OPS: Insert lead_scores, update companies.status\nERROR PATH: Missing inputs (e.g. no contacts row) -> contactability_score=0, scoring proceeds with the rest, does not fail the whole run\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 440,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "10-59/30 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Every 30 min, offset +10"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: status = 'RESEARCHED'. lead_scores has no unique constraint on company_id by design (re-scoring inserts a new history row, docs/06 \u00a74) \u2014 this query naturally won't re-select QUALIFIED companies since WF-06 already advanced them."
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        80
+      ],
+      "id": "get_researched",
+      "name": "Get RESEARCHED companies not yet scored",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        80
+      ],
+      "id": "Loop Over Rows",
+      "name": "Loop Over Rows"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf06/score",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_scoring",
+      "name": "Run scoring engine.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Every 30 min, offset +10": {
+      "main": [
+        [
+          {
+            "node": "Get RESEARCHED companies not yet scored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get RESEARCHED companies not yet scored": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Rows": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Run scoring engine.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run scoring engine.py": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

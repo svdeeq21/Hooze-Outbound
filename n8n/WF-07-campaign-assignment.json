@@ -1,0 +1,212 @@
+{
+  "name": "WF-07 - Campaign Assignment",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-07 \u2014 CAMPAIGN ASSIGNMENT\n\nTRIGGER: After WF-06, status=QUALIFIED\nINPUT: companies row, active campaigns\nPROCESSING: Calls the Python API's /wf07/match endpoint (python/campaign/matcher.py) \u2014 matching logic from docs/09-campaign-spec.md \u00a74\nOUTPUT: Campaign match returned as JSON ({matched, campaign_id, campaign_name}) for WF-08 to consume in the SAME run; if no match, lead stays QUALIFIED, visible as unmatched. No DB write here per docs/13 (write happens in WF-08).\nDB OPS: Read campaigns only \u2014 no write until WF-08 creates the outreach row\nERROR PATH: No active campaign matches -> endpoint returns matched=false, this workflow simply does not chain into WF-08 for that company\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 420,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "20-59/30 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Every 30 min, offset +20"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: status = 'QUALIFIED'"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        80
+      ],
+      "id": "get_qualified",
+      "name": "Get QUALIFIED companies",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        80
+      ],
+      "id": "Loop Over Rows",
+      "name": "Loop Over Rows"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf07/match",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_match",
+      "name": "Run campaign matcher.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.matched }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {},
+        "notesInFlow": "Only matched=true rows should chain into WF-08 (Message Generation) as a sub-workflow call \u2014 wire an Execute Workflow node here pointing at WF-08 in your n8n instance once both are imported. $json.campaign_id is already present directly on this node's output \u2014 the Python API returns matched/campaign_id/campaign_name as real JSON, no parsing step needed."
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        560,
+        0
+      ],
+      "id": "matched_check",
+      "name": "Matched?"
+    }
+  ],
+  "connections": {
+    "Every 30 min, offset +20": {
+      "main": [
+        [
+          {
+            "node": "Get QUALIFIED companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get QUALIFIED companies": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Rows": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Run campaign matcher.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run campaign matcher.py": {
+      "main": [
+        [
+          {
+            "node": "Matched?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Matched?": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

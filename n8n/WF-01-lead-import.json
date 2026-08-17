@@ -1,0 +1,207 @@
+{
+  "name": "WF-01 - Lead Import",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-01 \u2014 LEAD IMPORT\n\nTRIGGER: Manual run / scheduled (daily) \u2014 reads a Google Sheets staging tab\nINPUT: Raw rows from Google Sheets staging tab (name, industry, location, phone/whatsapp/email/website/socials, source)\nPROCESSING: Maps sheet columns to the companies schema shape 1:1 \u2014 no cleaning/validation here, that's WF-02's job\nOUTPUT: New companies rows, status=DISCOVERED\nDB OPS: Insert into companies\nERROR PATH: Malformed rows (missing name) logged to an 'import_errors' tab in the same sheet, not silently dropped; workflow continues with valid rows\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 380,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Daily 8am staging check"
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Staging",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        -160,
+        80
+      ],
+      "id": "read_sheet",
+      "name": "Read Staging Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CREDENTIAL_ID",
+          "name": "Hooze Google"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.name }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {},
+        "notesInFlow": "Valid rows need at minimum a non-empty 'name' column; everything else is optional at import time"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "has_name",
+      "name": "Has name?"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "create",
+        "tableId": "companies",
+        "notesInFlow": "Maps: name, industry, location, phone, email, website, linkedin, instagram, youtube, whatsapp, source, source_url. status defaults to DISCOVERED per the table default."
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        320,
+        0
+      ],
+      "id": "insert_company",
+      "name": "Insert companies row",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "GOOGLE_SHEET_ID",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "import_errors",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        320,
+        200
+      ],
+      "id": "log_import_error",
+      "name": "Log to import_errors tab",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "GOOGLE_CREDENTIAL_ID",
+          "name": "Hooze Google"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Daily 8am staging check": {
+      "main": [
+        [
+          {
+            "node": "Read Staging Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Staging Sheet": {
+      "main": [
+        [
+          {
+            "node": "Has name?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has name?": {
+      "main": [
+        [
+          {
+            "node": "Insert companies row",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log to import_errors tab",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

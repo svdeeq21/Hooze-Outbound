@@ -1,0 +1,174 @@
+{
+  "name": "WF-13 - Opportunity Management",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-13 \u2014 OPPORTUNITY MANAGEMENT\n\nTRIGGER: Webhook, dashboard action ('list' for the REPLIED queue + open opportunities, 'advance' for stage changes). Note: the MEETING auto-create path is handled directly inside python/classification/classifier.py (WF-12), not here \u2014 this workflow covers the manual dashboard path (PROPOSAL/WON/LOST stage changes Hooze makes personally) plus the read side.\nINPUT: {action: 'list'|'advance', company_id?, stage?, notes?}\nPROCESSING: 'list' calls the Python API's /wf13/list endpoint; 'advance' calls /wf13/advance (python/opportunities/manager.py create_or_advance()) \u2014 enforces stages only move forward\nOUTPUT: 'list' returns REPLIED companies + their latest response; 'advance' creates/updates an opportunities row; companies.status updated (MEETING/PROPOSAL/WON/LOST)\nDB OPS: Read, or insert/update opportunities + update companies\nERROR PATH: OpportunityError (invalid stage, or attempting to move backward) returned as a 400/500 to the dashboard\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 460,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf13-opportunities",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Dashboard action (list/advance)",
+      "webhookId": "wf13-opportunities"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "list",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "is_list",
+      "name": "List or Advance?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf13/list",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_list",
+      "name": "Run actions.list_replied_queue()",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf13/advance",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.body.company_id }}\",\n  \"stage\": \"{{ $json.body.stage }}\",\n  \"notes\": {{ JSON.stringify($json.body.notes || null) }}\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        200
+      ],
+      "id": "run_advance",
+      "name": "Run opportunities manager.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Dashboard action (list/advance)": {
+      "main": [
+        [
+          {
+            "node": "List or Advance?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List or Advance?": {
+      "main": [
+        [
+          {
+            "node": "Run actions.list_replied_queue()",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run opportunities manager.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

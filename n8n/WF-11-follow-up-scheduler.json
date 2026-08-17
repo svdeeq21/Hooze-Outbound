@@ -1,0 +1,93 @@
+{
+  "name": "WF-11 - Follow-up Scheduler",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-11 \u2014 FOLLOW-UP SCHEDULER\n\nTRIGGER: Scheduled, daily\nINPUT: outreach rows where status=ACTIVE and next_follow_up_at <= now() (queried inside the python module)\nPROCESSING: Calls the Python API's /wf11/run endpoint (python/followup/scheduler.py) \u2014 implements docs/11-follow-up.md \u00a72 cadence and max-attempts logic, drafts follow-ups via the personalization engine\nOUTPUT: New follow-up outreach row in PENDING_REVIEW, or outreach.status -> DEAD at max attempts (and companies.status -> DEAD if no other active campaign/opportunity)\nDB OPS: Update outreach, insert new draft row if generating a follow-up\nERROR PATH: Follow-up generation AI failures logged to error_log, that row simply isn't advanced this run (retried next day since next_follow_up_at wasn't cleared)\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 440,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Daily 7am"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf11/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "run_followup",
+      "name": "Run followup scheduler.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Daily 7am": {
+      "main": [
+        [
+          {
+            "node": "Run followup scheduler.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

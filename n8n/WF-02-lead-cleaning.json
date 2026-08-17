@@ -1,0 +1,169 @@
+{
+  "name": "WF-02 - Lead Cleaning",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-02 \u2014 LEAD CLEANING\n\nTRIGGER: New row with status=DISCOVERED (polled on a schedule; n8n has no native Postgres row-insert trigger without Supabase Realtime/webhooks configured separately)\nINPUT: companies row\nPROCESSING: Calls python/enrichment/normalize.py (python -m python.enrichment.normalize <company_id>) \u2014 computes normalized_name, phone_normalized, email_normalized\nOUTPUT: Updated row, status=CLEANED (pending dedup in WF-03)\nDB OPS: Update companies\nERROR PATH: Rows failing normalization flagged (module writes to error_log itself), status stays DISCOVERED, surfaced in WF-15\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 380,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Every 15 min"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: status = 'DISCOVERED'"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        80
+      ],
+      "id": "get_discovered",
+      "name": "Get DISCOVERED companies",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        80
+      ],
+      "id": "Loop Over Rows",
+      "name": "Loop Over Rows"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf02/clean",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_normalize",
+      "name": "Run normalize.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Every 15 min": {
+      "main": [
+        [
+          {
+            "node": "Get DISCOVERED companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get DISCOVERED companies": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Rows": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Run normalize.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run normalize.py": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

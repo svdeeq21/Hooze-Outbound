@@ -1,0 +1,93 @@
+{
+  "name": "WF-14 - Analytics",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-14 \u2014 ANALYTICS\n\nTRIGGER: Scheduled, weekly (docs/15-analytics-spec.md \u00a78: 'weekly check, not a daily distraction')\nINPUT: All pipeline tables (read inside the python module)\nPROCESSING: Calls the Python API's /wf14/run endpoint (python/analytics/reports.py) \u2014 computes docs/15-analytics-spec.md \u00a72/\u00a73 funnel + metrics, sliced by source\nOUTPUT: Rows written to analytics_snapshots, surfaced on dashboard\nDB OPS: Read all tables, write aggregates to analytics_snapshots\nERROR PATH: If a metric's denominator is 0, that metric is stored as null (not fabricated as 0%) \u2014 see python/analytics/reports.py safe_div()\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 420,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 6 * * 1"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Weekly, Monday 6am"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf14/run",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "run_analytics",
+      "name": "Run analytics reports.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Weekly, Monday 6am": {
+      "main": [
+        [
+          {
+            "node": "Run analytics reports.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

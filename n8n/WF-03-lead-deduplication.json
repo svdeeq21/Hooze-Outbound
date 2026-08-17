@@ -1,0 +1,169 @@
+{
+  "name": "WF-03 - Lead Deduplication",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-03 \u2014 LEAD DEDUPLICATION\n\nTRIGGER: After WF-02 (polls status=CLEANED rows not yet dedup-checked \u2014 see note below)\nINPUT: Normalized companies row\nPROCESSING: Calls the Python API's /wf03/dedup endpoint (python/enrichment/dedup.py) \u2014 matches on normalized_name+location, phone_normalized, or email_normalized\nOUTPUT: Duplicate -> discarded (row deleted, survivor logged); unique -> proceeds, status stays CLEANED; ambiguous -> flagged, not auto-merged\nDB OPS: Select + conditional delete on companies, insert to error_log\nERROR PATH: Ambiguous matches (partial overlap across different rows) flagged for manual review in error_log, not auto-merged\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 420,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5-59/15 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Every 15 min, offset +5"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: status = 'CLEANED'. NOTE: dedup.py is idempotent-safe to re-run (a row that survives once won't match itself), but for efficiency at scale add a 'dedup_checked' boolean column in a later migration if this table grows large."
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        80
+      ],
+      "id": "get_cleaned",
+      "name": "Get CLEANED companies",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        80
+      ],
+      "id": "Loop Over Rows",
+      "name": "Loop Over Rows"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf03/dedup",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_dedup",
+      "name": "Run dedup.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Every 15 min, offset +5": {
+      "main": [
+        [
+          {
+            "node": "Get CLEANED companies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get CLEANED companies": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Rows": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Run dedup.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run dedup.py": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

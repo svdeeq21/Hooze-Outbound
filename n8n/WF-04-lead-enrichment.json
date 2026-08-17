@@ -1,0 +1,169 @@
+{
+  "name": "WF-04 - Lead Enrichment",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-04 \u2014 LEAD ENRICHMENT\n\nTRIGGER: After WF-03, status=CLEANED (survived dedup)\nINPUT: companies row\nPROCESSING: Calls the Python API's /wf04/enrich endpoint (python/enrichment/enrich.py) \u2014 fills gaps: domain from website, website from domain, WhatsApp candidate flagging\nOUTPUT: Enriched companies row (status unchanged \u2014 still CLEANED, WF-05 advances it to RESEARCHED)\nDB OPS: Update companies\nERROR PATH: Enrichment failures don't block progression \u2014 the module never raises, just returns fewer updates; proceeds to research with whatever's available\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 380,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "10-59/15 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Every 15 min, offset +10"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: status = 'CLEANED'"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        80
+      ],
+      "id": "get_cleaned",
+      "name": "Get CLEANED companies (post-dedup)",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        80,
+        80
+      ],
+      "id": "Loop Over Rows",
+      "name": "Loop Over Rows"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf04/enrich",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_enrich",
+      "name": "Run enrich.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Every 15 min, offset +10": {
+      "main": [
+        [
+          {
+            "node": "Get CLEANED companies (post-dedup)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get CLEANED companies (post-dedup)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Rows": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Run enrich.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run enrich.py": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

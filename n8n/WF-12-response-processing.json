@@ -1,0 +1,168 @@
+{
+  "name": "WF-12 - Response Processing",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-12 \u2014 RESPONSE PROCESSING\n\nTRIGGER: Inbound message webhook (WhatsApp Business API / email parser), or manual entry from the dashboard\nINPUT: {outreach_id, response_text}\nPROCESSING: Calls the Python API's /wf12/classify endpoint (python/classification/classifier.py) \u2014 hard UNSUBSCRIBE keyword pre-check runs BEFORE any AI call, then classifies via prompts/classifier.md, then routes per docs/12-response-classification.md \u00a71\nOUTPUT: responses row; outreach.status updated; follow-ups stopped; companies.status updated per the classification's routing rule\nDB OPS: Insert responses, update outreach, update companies\nERROR PATH: Classification failures (AI error or invalid category) default to UNKNOWN, never guess INTERESTED/NOT_INTERESTED \u2014 docs/12 \u00a74\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 440,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf12-inbound-reply",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Inbound reply (WhatsApp/email/manual)",
+      "webhookId": "wf12-inbound-reply"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf12/classify",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"outreach_id\": \"{{ $json.body.outreach_id }}\",\n  \"response_text\": {{ JSON.stringify($json.body.response_text) }}\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "run_classify",
+      "name": "Run classifier.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.notify_immediately }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {},
+        "notesInFlow": "docs/12 \u00a71: INTERESTED, PRICE, MEETING notify Hooze immediately rather than waiting for the daily review"
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        320,
+        80
+      ],
+      "id": "should_notify",
+      "name": "High-value reply?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.HOOZE_TELEGRAM_CHAT_ID }}",
+        "text": "=\ud83d\udd25 High-value reply received! Check the dashboard now \u2014 classification: {{ $json.classification }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        0
+      ],
+      "id": "notify_hooze",
+      "name": "Notify Hooze immediately",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Hooze Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Inbound reply (WhatsApp/email/manual)": {
+      "main": [
+        [
+          {
+            "node": "Run classifier.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Run classifier.py": {
+      "main": [
+        [
+          {
+            "node": "High-value reply?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "High-value reply?": {
+      "main": [
+        [
+          {
+            "node": "Notify Hooze immediately",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

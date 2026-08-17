@@ -1,0 +1,93 @@
+{
+  "name": "WF-08 - Message Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-08 \u2014 MESSAGE GENERATION\n\nTRIGGER: After WF-07 finds a match (chained via Execute Workflow, or standalone poll below)\nINPUT: Structured object per docs/08-personalization-spec.md \u00a72 (built inside the python module from company_id + campaign_id)\nPROCESSING: Calls the Python API's /wf08/generate endpoint (python/personalization/generator.py) -> AI call using prompts/personalizer.md, then python/personalization/validator.py checks (docs/08 \u00a76)\nOUTPUT: outreach row(s), status=PENDING_REVIEW; companies.status -> REVIEW\nDB OPS: Insert outreach\nERROR PATH: Validation failures flagged in error_log (warning field) but still routed to review, per docs/08-personalization-spec.md \u00a76 (never silently blocked)\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 440,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf08-generate",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "From WF-07 (company_id + campaign_id) or standalone poll",
+      "webhookId": "wf08-generate"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf08/generate",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"company_id\": \"{{ $json.body.company_id }}\",\n  \"campaign_id\": \"{{ $json.body.campaign_id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "run_generate",
+      "name": "Run personalization generator.py",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "From WF-07 (company_id + campaign_id) or standalone poll": {
+      "main": [
+        [
+          {
+            "node": "Run personalization generator.py",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

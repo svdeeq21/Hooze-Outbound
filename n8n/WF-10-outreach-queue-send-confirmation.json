@@ -1,0 +1,174 @@
+{
+  "name": "WF-10 - Outreach Queue Send Confirmation",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-10 \u2014 OUTREACH QUEUE / SEND CONFIRMATION\n\nTRIGGER: Webhook, called by dashboard \u2014 'list' action for the send queue, 'mark_sent' for the confirm button\nINPUT: {action: 'list'|'mark_sent', outreach_id?} \u2014 per docs/10-outreach-sop.md \u00a74\nPROCESSING: 'list' calls the Python API's /wf10/list endpoint (APPROVED rows waiting to be sent manually); 'mark_sent' calls /wf10/mark_sent \u2014 enforces the 'no concurrent active outreach per company' guardrail (docs/05-lead-lifecycle.md \u00a74) and schedules the first follow-up\nOUTPUT: 'list' returns APPROVED rows; 'mark_sent' sets outreach.status = SENT -> ACTIVE, next_follow_up_at set, companies.status = CONTACTED\nDB OPS: Read or update outreach, update companies\nERROR PATH: ReviewActionError (wrong status, or a concurrent active outreach already exists) returned as a 400/500 to the dashboard, nothing is written\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 440,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf10-outreach-queue",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Dashboard action (list/mark_sent)",
+      "webhookId": "wf10-outreach-queue"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.action }}",
+              "rightValue": "list",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        80,
+        80
+      ],
+      "id": "is_list",
+      "name": "List or Mark Sent?"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf10/list",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        0
+      ],
+      "id": "run_list",
+      "name": "Run actions.list_send_queue()",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf10/mark_sent",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"outreach_id\": \"{{ $json.body.outreach_id }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        200
+      ],
+      "id": "run_mark_sent",
+      "name": "Run actions.mark_sent()",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Dashboard action (list/mark_sent)": {
+      "main": [
+        [
+          {
+            "node": "List or Mark Sent?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List or Mark Sent?": {
+      "main": [
+        [
+          {
+            "node": "Run actions.list_send_queue()",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run actions.mark_sent()",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

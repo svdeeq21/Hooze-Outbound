@@ -1,0 +1,3 @@
+name,industry,location,phone,email,website,linkedin,instagram,youtube,whatsapp,source,source_url
+Prime Estate,Real Estate,Abuja,08012345678,info@primeestate.example,https://primeestate.example,https://linkedin.com/company/prime-estate-example,,,,manual,https://primeestate.example
+Sunrise Properties,Real Estate,Abuja,,contact@sunriseproperties.example,https://sunriseproperties.example,,https://instagram.com/sunrisepropertiesabj,,,google_maps,https://maps.google.com/?q=sunrise+properties+abuja

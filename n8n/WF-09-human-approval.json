@@ -1,0 +1,247 @@
+{
+  "name": "WF-09 - Human Approval",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-09 \u2014 HUMAN APPROVAL (dashboard-backed)\n\nTRIGGER: Webhook, called by dashboard/index.html \u2014 'list' action for reads, 'approve'/'reject' for writes\nINPUT: {action: 'list'|'approve'|'reject', outreach_id?, edited_message?, reason?} \u2014 per docs/10-outreach-sop.md \u00a73\nPROCESSING: 'list' calls the Python API's /wf09/list endpoint; 'approve'/'reject' call /wf09/approve and /wf09/reject. This workflow just routes and forwards \u2014 no business logic lives in n8n itself, matching docs/14-security-spec.md \u00a77 ('no separate exposed API surface') since the Python API is the only thing that ever touches Supabase.\nOUTPUT: 'list' returns the REVIEW-state queue sorted by priority; 'approve'/'reject' update outreach.status (APPROVED or REJECTED); companies.status reverts to QUALIFIED on reject\nDB OPS: Read (list) or update (approve/reject) outreach + companies\nERROR PATH: ReviewActionError (e.g. wrong current status, empty rejection reason) returned as a 400/500 response to the dashboard, nothing is written\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 440,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "wf09-review-action",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Dashboard action (list/approve/reject)",
+      "webhookId": "wf09-review-action"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "list",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "list"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "approve",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "approve"
+            },
+            {
+              "conditions": {
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.body.action }}",
+                    "rightValue": "reject",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputKey": "reject"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        80,
+        80
+      ],
+      "id": "route_action",
+      "name": "Route by action"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf09/list",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        -120
+      ],
+      "id": "run_list",
+      "name": "Run actions.list_review_queue()",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf09/approve",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"outreach_id\": \"{{ $json.body.outreach_id }}\",\n  \"edited_message\": {{ JSON.stringify($json.body.edited_message || null) }}\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        60
+      ],
+      "id": "run_approve",
+      "name": "Run actions.approve()",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.PYTHON_API_URL }}/wf09/reject",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Internal-Secret",
+              "value": "={{ $env.PYTHON_API_SECRET }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"outreach_id\": \"{{ $json.body.outreach_id }}\",\n  \"reason\": \"{{ $json.body.reason }}\"\n}"
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        320,
+        240
+      ],
+      "id": "run_reject",
+      "name": "Run actions.reject()",
+      "continueOnFail": true,
+      "alwaysOutputData": true
+    }
+  ],
+  "connections": {
+    "Dashboard action (list/approve/reject)": {
+      "main": [
+        [
+          {
+            "node": "Route by action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by action": {
+      "main": [
+        [
+          {
+            "node": "Run actions.list_review_queue()",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run actions.approve()",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Run actions.reject()",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}

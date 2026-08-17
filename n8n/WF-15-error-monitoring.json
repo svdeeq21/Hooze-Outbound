@@ -1,0 +1,264 @@
+{
+  "name": "WF-15 - Error Monitoring",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "WF-15 \u2014 ERROR MONITORING\n\nTRIGGER: Scheduled health check (every 30 min) \u2014 reads the error_log table every other workflow's Python module already writes to on failure. (True per-workflow n8n Error Triggers can ALSO be wired to point here for immediate notification; this scheduled poll is the safety net that works even if an individual workflow's Error Trigger isn't wired up yet.)\nINPUT: error_log rows created since the last check, plus a stuck-lead health check (companies sitting in one status too long)\nPROCESSING: Aggregates failures, flags data-quality issues per docs/13-n8n-architecture.md WF-15\nOUTPUT: Telegram notification to Hooze; error_log rows are the dashboard's error log view directly (no separate table needed)\nDB OPS: Select from error_log and companies (for the stuck-lead check); no writes\nERROR PATH: N/A \u2014 this workflow IS the error path for every other workflow.\n\nSetup: point every Supabase node's credential at your project, and set\nExecute Command nodes' working directory to the repo root (needs\n`pip install -r python/requirements.txt` done first, and SUPABASE_URL /\nSUPABASE_SERVICE_ROLE_KEY / GEMINI_API_KEY / GROQ_API_KEY set as\nenvironment variables n8n can see).",
+        "height": 460,
+        "width": 420
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -680,
+        -120
+      ],
+      "id": "sticky-note-header",
+      "name": "Workflow Contract (docs/13-n8n-architecture.md)"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/30 * * * *"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -420,
+        80
+      ],
+      "id": "trigger",
+      "name": "Every 30 min"
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "error_log",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: created_at >= now() - interval '30 minutes'"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "get_errors",
+      "name": "Get recent error_log rows",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        80,
+        0
+      ],
+      "id": "has_errors",
+      "name": "Any new errors?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.HOOZE_TELEGRAM_CHAT_ID }}",
+        "text": "=\u26a0\ufe0f {{ $json.length }} new pipeline error(s) in the last 30 min. Check the dashboard error log.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        320,
+        -80
+      ],
+      "id": "notify_errors",
+      "name": "Notify Hooze of errors",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Hooze Telegram Bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies",
+        "returnAll": true,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "notesInFlow": "Filter: status NOT IN ('WON','LOST','DEAD') AND updated_at < now() - interval '7 days' \u2014 a lead sitting untouched for a week in an active pipeline status is a data-quality smell worth flagging (docs/13 WF-15: 'flags data-quality issues (e.g. leads stuck in one state too long)')"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        -160,
+        160
+      ],
+      "id": "get_stuck",
+      "name": "Check for stuck leads",
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Hooze Supabase"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        80,
+        160
+      ],
+      "id": "has_stuck",
+      "name": "Any stuck leads?"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.HOOZE_TELEGRAM_CHAT_ID }}",
+        "text": "=\ud83d\udc0c {{ $json.length }} lead(s) have been stuck in the same status for 7+ days. Check the dashboard.",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        320,
+        240
+      ],
+      "id": "notify_stuck",
+      "name": "Notify Hooze of stuck leads",
+      "credentials": {
+        "telegramApi": {
+          "id": "TELEGRAM_CREDENTIAL_ID",
+          "name": "Hooze Telegram Bot"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 30 min": {
+      "main": [
+        [
+          {
+            "node": "Get recent error_log rows",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Check for stuck leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get recent error_log rows": {
+      "main": [
+        [
+          {
+            "node": "Any new errors?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any new errors?": {
+      "main": [
+        [
+          {
+            "node": "Notify Hooze of errors",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check for stuck leads": {
+      "main": [
+        [
+          {
+            "node": "Any stuck leads?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any stuck leads?": {
+      "main": [
+        [
+          {
+            "node": "Notify Hooze of stuck leads",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": false
+  }
+}
