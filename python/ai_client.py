@@ -119,7 +119,15 @@ def _call_groq(api_key: str, system_prompt: str, user_input: dict[str, Any]) -> 
 
     url = "https://api.groq.com/openai/v1/chat/completions"
     payload = {
-        "model": "llama-3.3-70b-versatile",
+        # Groq deprecated the Llama chat models (llama-3.3-70b-versatile,
+        # llama-3.1-8b-instant) in mid-2026. openai/gpt-oss-120b is Groq's
+        # own recommended replacement — same general-purpose/reasoning use
+        # case, faster inference. If Groq deprecates THIS model too in the
+        # future, this is the one line to update — check
+        # https://console.groq.com/docs/models for the current list before
+        # picking a replacement, since Groq's catalog changes without
+        # much notice (see the 404 "model_not_found" error this replaces).
+        "model": "openai/gpt-oss-120b",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_input)},
